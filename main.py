@@ -1,87 +1,59 @@
-import numpy as np
+import warnings
+
 import cv2
-import time
-import math
-from matplotlib import pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-from numpy.ma.core import size
+import numpy as np
 
-class Processing(object):
-    def __init__(self):
-        self.focalLen = 910
-        self.height = 880
-        self.width = 1200
-        self.Y = 16
-        self.X = 16
-
-    def featureExtractor(self, img):
-        for y in range(0, self.height, self.Y):
-            for x in range(0, self.wifth, self.X):
-                pass
-        
-    def process_frame(self, img):
-        height, width, z = img.shape
-               
-        img = cv2.resize(img, (width//2, height//2))
-        
-        orb = cv2.ORB_create()
-        kp, des = orb.detectAndCompute(img, None)
-        for p in kp:
-            u,v = map(lambda x: int(round(x)), p.pt)
-            cv2.circle(img, (u,v), color=(0,255,0), radius=1)
-            # img2 = cv2.drawKeypoints(img, kp, None, color=(50, 255, 0))
-        
-        # self.drawImg("Keypoints on Img", img, kp)
-        
-        return img, kp, des
-    
-    def matcher(self, img1, kp1, img2, kp2, des1, des2):
-        #creates the brute force matcher
-        #pass in NORM_HAMMING because ORB uses binary string descriptors
-        
-        #set crossCheck equal to True for better accuracy
-        bf = cv2.BFMatcher(cv2.NORM_HAMMING2, crossCheck=True)
-        matches = bf.match(des1, des2)
-        #best matches got to the front of the matches array
-        matches = sorted(matches, key=lambda x: x.distance)
-        
-        # Draw first 10 matches.
-        img3 = cv2.drawMatches(img1, kp1, img2, kp2, matches[:5], img1, flags=2)
-        self.drawImg("Association", img3) 
-            
-    def drawImg(self, title ,frame, kp=None):
-        cv2.imshow(title, frame)
-        cv2.waitKey(1) #0xFF == ord('q')
-        
+from featureDet import FeatureDetector, Processing
+from laneDet import LaneDetection
+from selectVideoFile import SelectVideo
 
 
-if __name__ == "__main__":
-    check = Processing()
-    cap = cv2.VideoCapture('unlabeled/6.hevc')
-    
-    # fps= int(cap.get(cv2.CAP_PROP_FPS))
-    # print("This is the fps ", fps)
-    
-    isFirstFrame = True
-    while cap.isOpened():
-        ret, currentFrame= cap.read()
-        if ret == True:
-            img2, kp2, des2 = check.process_frame(currentFrame)
-            
-            if isFirstFrame:
-                print("First", isFirstFrame)
-                isFirstFrame = False
-                
-                img1 = img2
-                kp1 = kp2
-                des1 = des2
-            else:
-                check.matcher(img1, kp1, img2, kp2, des1, des2)
-            
-                img1 = img2
-                kp1 = kp2
-                des1 = des2
-            
-        
-        else:
-            break
+def drawImg(title, frame):
+    cv2.imshow(title, frame)
+    cv2.waitKey(1)  # 0xFF == ord('q')
+
+detect = LaneDetection()
+
+F = 910
+height = 880
+width = 1200
+
+K = np.array(([F, 0, width//2], [0, F, height//2], [0, 0, 1]))
+fe = FeatureDetector(K)
+check = Processing(fe)
+
+
+cap = SelectVideo().select()
+
+
+# fps= int(cap.get(cv2.CAP_PROP_FPS))
+# print("This is the fps ", fps)
+
+
+isFirstFrame = True
+while cap.isOpened():
+    warnings.simplefilter('ignore', np.RankWarning)
+    warnings.simplefilter("ignore", category=RuntimeWarning)
+    ret, currentFrame = cap.read()
+    if ret == True:
+        # Lane Detection Code
+        # tempFrame = currentFrame
+        currentFrame = currentFrame[0:640, :]
+
+        canny_img = detect.canny_det(currentFrame)
+        cropped_img = detect.roi(canny_img)
+        lines = cv2.HoughLinesP(cropped_img, rho=5, theta=np.pi/160,
+                                threshold=30, lines=np.array([]),
+                                minLineLength=35, maxLineGap=8)
+        avg_lines = detect.avg_line_img(currentFrame, lines)
+        line_image = detect.displayLine(currentFrame, avg_lines)
+
+        # Feature Detection
+        # img2, kp2, des2 = check.process_frame(currentFrame)
+        img2 = check.process_frame(currentFrame)
+
+        # Draw on image
+        combo = cv2.addWeighted(img2, 0.8, line_image, 1, 1)
+        drawImg("Lane Detection", combo)
+    else:
+        break
